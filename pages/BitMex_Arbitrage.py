@@ -113,15 +113,17 @@ for i, instrument in active_instruments[active_instruments['typ'] == 'FFCCSX'].i
     joigned_quotes['expected_premium (%)'] = joigned_quotes.apply(lambda x: (get_discount_factor(risk_free_rate, x['timestamp'], instrument['expiry']) - 1) * 100, axis=1)
     # joigned_quotes['excess return (%)'] = joigned_quotes['premium (%)'] - joigned_quotes['expected_premium (%)']
 
+    days_till_expiration = (instrument['expiry'] - pd.to_datetime(current_date_time, utc=True)).days
+
     current_quote = joigned_quotes.iloc[-1]
     current_spread = current_quote['askPrice'] - current_quote['bidPrice']
     current_spread_percent = (current_spread / current_quote['bidPrice']) * 100
     current_premium_percent = current_quote['premium (%)']
+    current_annualized_potential_return = round(365 / days_till_expiration * (current_quote['premium (%)']), 2)
     expected_premium_percent = current_quote['expected_premium (%)']
-    days_till_expiration = (instrument['expiry'] - pd.to_datetime(current_date_time, utc=True)).days
 
     st.write('Maturity : ', datetime.datetime.fromisoformat(str(instrument['expiry'])).strftime("%B %d, %Y"))
-    st.write('Current premiun (Compared to BTC) : ', round(current_premium_percent, 2), '%')
+    st.write('Current premiun (Compared to BTC) : ', round(current_premium_percent, 2), '% (', current_annualized_potential_return, '% annualized)')
     st.write('Current premiun (Compared to risk free rate) : ', round(current_premium_percent - expected_premium_percent, 2), '%')
     st.write('Current spread : ', round(current_spread_percent, 2), '%')
     st.line_chart(joigned_quotes, x='timestamp', y=['premium (%)', 'expected_premium (%)'])
