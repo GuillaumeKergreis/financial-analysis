@@ -14,6 +14,7 @@ st.title('BitMex Arbitrage')
 # Sidebar
 st.sidebar.title('Configuration')
 
+contract_currency = st.sidebar.selectbox(label='Currency contract', options=['USD', 'USDT'])
 risk_free_rate = st.sidebar.number_input(label='Risk free rate (%)', value=5.3, min_value=0.0, max_value=100.0, step=0.1)
 initial_investment = st.sidebar.number_input(label='Initial investment ($)', value=1000, min_value=0)
 leverage = st.sidebar.number_input(label='Leverage', value=2, min_value=0)
@@ -30,7 +31,7 @@ def get_bitmex_client(api_key: str, api_secret: str) -> SwaggerClient:
 
 client = get_bitmex_client(api_key=client_id, api_secret=client_secret)
 
-def get_active_instruments(client: SwaggerClient, root_symbol: str='XBT') -> DataFrame:
+def get_active_instruments(client: SwaggerClient) -> DataFrame:
     active_instruments, _ = client.Instrument.Instrument_getActive().result()
     return pd.DataFrame(active_instruments)
 
@@ -38,16 +39,16 @@ def get_active_instruments(client: SwaggerClient, root_symbol: str='XBT') -> Dat
 # instruments = client.Instrument.Instrument_get(filter=json.dumps({'symbol': 'BTC'})).result()
 active_instruments = get_active_instruments(client)
 
-current_btc_price = active_instruments[active_instruments['symbol'] == 'XBTUSD'].iloc[0]['midPrice']
+current_btc_price = active_instruments[active_instruments['symbol'] == f'XBT{contract_currency}'].iloc[0]['midPrice']
 
 st.write('Current BTC value (perpetual contract) : ', current_btc_price, '$')
 
 current_date_time = datetime.datetime.now()
 
-active_instruments = active_instruments[active_instruments['typ'].isin(['FFWCSX', 'FFWCSF', 'IFXXXP', 'FFCCSX'])]
+active_instruments = active_instruments[active_instruments['typ'].isin(['FFWCSX', 'FFWCSF', 'FFCCSX'])]
 active_instruments = active_instruments[active_instruments['rootSymbol'] == 'XBT']
 active_instruments = active_instruments[active_instruments['state'] == 'Open']
-active_instruments = active_instruments[active_instruments['quoteCurrency'] == 'USD']
+active_instruments = active_instruments[active_instruments['quoteCurrency'] == contract_currency]
 active_instruments = active_instruments[['symbol', 'typ', 'expiry', 'midPrice', 'bidPrice', 'askPrice']]
 active_instruments['spread'] = active_instruments['askPrice'] - active_instruments['bidPrice']
 active_instruments['spread (%)'] = ((active_instruments['askPrice'] / active_instruments['bidPrice']) - 1) * 100
@@ -98,7 +99,7 @@ st.line_chart(active_instruments, x='expiry', y=['midPrice', 'expected_value'])
 st.write('# Premium (%) per maturity')
 st.line_chart(active_instruments, x='expiry', y=['current_premium (%)', 'expected_premium (%)'], )
 
-xbtquotes = pd.DataFrame(client.Quote.Quote_getBucketed(symbol='XBTUSD', binSize='1d', partial = True, startTime=datetime.datetime.fromisoformat('2023-01-01'), count = 1000).result()[0])
+xbtquotes = pd.DataFrame(client.Quote.Quote_getBucketed(symbol=f'XBT{contract_currency}', binSize='1d', partial = True, startTime=datetime.datetime.fromisoformat('2023-01-01'), count = 1000).result()[0])
 
 for i, instrument in active_instruments[active_instruments['typ'] == 'FFCCSX'].iterrows():
     instrument_symbol = instrument['symbol']
@@ -110,6 +111,7 @@ for i, instrument in active_instruments[active_instruments['typ'] == 'FFCCSX'].i
     joigned_quotes = pd.merge(quotes, xbtquotes, left_on='timestamp', right_on='timestamp', how='left', suffixes=('', '_XBT'))
     joigned_quotes['premium'] = ((joigned_quotes['askPrice'] + joigned_quotes['bidPrice']) / 2) - ((joigned_quotes['askPrice_XBT'] + joigned_quotes['bidPrice_XBT']) / 2)
     joigned_quotes['premium (%)'] = joigned_quotes['premium'] / ((joigned_quotes['askPrice_XBT'] + joigned_quotes['bidPrice_XBT']) / 2) * 100
+    joigned_quotes['annualized premium (%)'] = joigned_quotes.apply(lambda x: 365 / ((instrument['expiry'] - x['timestamp']).days) * x['premium (%)'], axis=1)
     joigned_quotes['expected_premium (%)'] = joigned_quotes.apply(lambda x: (get_discount_factor(risk_free_rate, x['timestamp'], instrument['expiry']) - 1) * 100, axis=1)
     # joigned_quotes['excess return (%)'] = joigned_quotes['premium (%)'] - joigned_quotes['expected_premium (%)']
 
@@ -126,7 +128,7 @@ for i, instrument in active_instruments[active_instruments['typ'] == 'FFCCSX'].i
     st.write('Current premiun (Compared to BTC) : ', round(current_premium_percent, 2), '% (', current_annualized_potential_return, '% annualized)')
     st.write('Current premiun (Compared to risk free rate) : ', round(current_premium_percent - expected_premium_percent, 2), '%')
     st.write('Current spread : ', round(current_spread_percent, 2), '%')
-    st.line_chart(joigned_quotes, x='timestamp', y=['premium (%)', 'expected_premium (%)'])
+    st.line_chart(joigned_quotes, x='timestamp', y=['premium (%)', 'expected_premium (%)', 'annualized premium (%)'])
 
 
     if current_spread_percent > 1:
@@ -136,8 +138,8 @@ for i, instrument in active_instruments[active_instruments['typ'] == 'FFCCSX'].i
         st.write('- Place an bid (buy) limit order on ', instrument_symbol, ' at ', current_quote['bidPrice'], '. If someone take it, sell the XBTUSD at market (', current_btc_price,') and benefit of a', round(((current_btc_price / current_quote['bidPrice']) - 1) * 100, 2), '% return in', days_till_expiration, 'days. Equivalent to a ', round(365/days_till_expiration * (((current_btc_price / current_quote['bidPrice']) - 1) * 100), 2), '% annualised return.')
         st.write('- Place an ask (sell) limit order on ', instrument_symbol, ' at ', current_quote['askPrice'], '. If someone take it, buy the XBTUSD at market (', current_btc_price,') and benefit of a', round(((current_quote['askPrice'] / current_btc_price) - 1) * 100, 2), '% return in', days_till_expiration, 'days. Equivalent to a ', round(365/days_till_expiration * (((current_quote['askPrice'] / current_btc_price) - 1) * 100), 2), '% annualised return.')
 
-    if current_premium_percent - expected_premium_percent > 1:
-        st.write('=> Premium compared to risk free rate is currently high and spread is low !')
+    if current_annualized_potential_return > risk_free_rate:
+        st.write('=> Annualized premium compared to risk free rate is currently high and spread is low !')
         st.write('- Borrow money at the risk free rate (', risk_free_rate, '% annual), use the borrowed money to buy XBTUSD at market (', current_btc_price,
                  ') and sell ', instrument_symbol, ' with a market order at bid price (', current_quote['bidPrice'], ').'
                  'After ', days_till_expiration, ' days, close both positions, return the borrowed money and the due interest rates (', round(expected_premium_percent, 2), '%) and benefit from a net ', round(current_premium_percent - expected_premium_percent, 2), '% excess profit on your operation. ',
