@@ -55,7 +55,7 @@ active_instruments['spread (%)'] = ((active_instruments['askPrice'] / active_ins
 
 active_instruments['current_premium'] = active_instruments['midPrice'] - current_btc_price
 active_instruments['current_premium (%)'] = ((active_instruments['midPrice'] - current_btc_price) / current_btc_price) * 100
-active_instruments.loc[active_instruments['expiry'].isna(), 'expiry'] = current_date_time
+active_instruments.loc[active_instruments['expiry'].isna(), 'expiry'] = pd.to_datetime(current_date_time, utc=True)
 active_instruments['expiry'] = pd.to_datetime(active_instruments['expiry'], utc=True)
 
 active_instruments['expected_value'] = active_instruments['expiry'].apply(lambda x: current_btc_price * math.exp((risk_free_rate/100) * ((x - pd.to_datetime(current_date_time, utc=True)).days / 365)))
@@ -101,6 +101,22 @@ st.line_chart(active_instruments, x='expiry', y=['current_premium (%)', 'expecte
 
 xbtquotes = pd.DataFrame(client.Quote.Quote_getBucketed(symbol=f'XBT{contract_currency}', binSize='1d', partial = True, startTime=datetime.datetime.fromisoformat('2023-01-01'), count = 1000).result()[0])
 
+
+def get_annualized_premium(start_date, end_date, period_premium):
+    nb_days = (end_date - start_date).days
+    if nb_days == 0:
+        return 0
+    else:
+        return 365 / nb_days * period_premium
+
+
+def get_annualized_premium_from_period(period_days, period_premium):
+    if period_days == 0:
+        return 0
+    else:
+        return 365 / period_days * period_premium
+
+
 for i, instrument in active_instruments[active_instruments['typ'] == 'FFCCSX'].iterrows():
     instrument_symbol = instrument['symbol']
     st.write('# ', instrument_symbol)
@@ -111,7 +127,7 @@ for i, instrument in active_instruments[active_instruments['typ'] == 'FFCCSX'].i
     joigned_quotes = pd.merge(quotes, xbtquotes, left_on='timestamp', right_on='timestamp', how='left', suffixes=('', '_XBT'))
     joigned_quotes['premium'] = ((joigned_quotes['askPrice'] + joigned_quotes['bidPrice']) / 2) - ((joigned_quotes['askPrice_XBT'] + joigned_quotes['bidPrice_XBT']) / 2)
     joigned_quotes['premium (%)'] = joigned_quotes['premium'] / ((joigned_quotes['askPrice_XBT'] + joigned_quotes['bidPrice_XBT']) / 2) * 100
-    joigned_quotes['annualized premium (%)'] = joigned_quotes.apply(lambda x: 365 / ((instrument['expiry'] - x['timestamp']).days) * x['premium (%)'], axis=1)
+    joigned_quotes['annualized premium (%)'] = joigned_quotes.apply(lambda x: get_annualized_premium(x['timestamp'], instrument['expiry'], x['premium (%)']) , axis=1)
     joigned_quotes['expected_premium (%)'] = joigned_quotes.apply(lambda x: (get_discount_factor(risk_free_rate, x['timestamp'], instrument['expiry']) - 1) * 100, axis=1)
     # joigned_quotes['excess return (%)'] = joigned_quotes['premium (%)'] - joigned_quotes['expected_premium (%)']
 
@@ -121,7 +137,7 @@ for i, instrument in active_instruments[active_instruments['typ'] == 'FFCCSX'].i
     current_spread = current_quote['askPrice'] - current_quote['bidPrice']
     current_spread_percent = (current_spread / current_quote['bidPrice']) * 100
     current_premium_percent = current_quote['premium (%)']
-    current_annualized_potential_return = round(365 / days_till_expiration * (current_quote['premium (%)']), 2)
+    current_annualized_potential_return = round(get_annualized_premium_from_period(days_till_expiration, current_quote['premium (%)']), 2)
     expected_premium_percent = current_quote['expected_premium (%)']
 
     st.write('Maturity : ', datetime.datetime.fromisoformat(str(instrument['expiry'])).strftime("%B %d, %Y"))
@@ -135,15 +151,15 @@ for i, instrument in active_instruments[active_instruments['typ'] == 'FFCCSX'].i
         st.write('=> Spread is high currently, it\'s time to provide liquidity !')
         st.line_chart(joigned_quotes, x='timestamp', y=['bidPrice', 'askPrice', 'bidPrice_XBT'])
         st.write('Potential market making arbitrage possible : ')
-        st.write('- Place an bid (buy) limit order on ', instrument_symbol, ' at ', current_quote['bidPrice'], '. If someone take it, sell the XBTUSD at market (', current_btc_price,') and benefit of a', round(((current_btc_price / current_quote['bidPrice']) - 1) * 100, 2), '% return in', days_till_expiration, 'days. Equivalent to a ', round(365/days_till_expiration * (((current_btc_price / current_quote['bidPrice']) - 1) * 100), 2), '% annualised return.')
-        st.write('- Place an ask (sell) limit order on ', instrument_symbol, ' at ', current_quote['askPrice'], '. If someone take it, buy the XBTUSD at market (', current_btc_price,') and benefit of a', round(((current_quote['askPrice'] / current_btc_price) - 1) * 100, 2), '% return in', days_till_expiration, 'days. Equivalent to a ', round(365/days_till_expiration * (((current_quote['askPrice'] / current_btc_price) - 1) * 100), 2), '% annualised return.')
+        st.write('- Place an bid (buy) limit order on ', instrument_symbol, ' at ', current_quote['bidPrice'], '. If someone take it, sell the XBTUSD at market (', current_btc_price,') and benefit of a', round(((current_btc_price / current_quote['bidPrice']) - 1) * 100, 2), '% return in', days_till_expiration, 'days. Equivalent to a ', round(get_annualized_premium_from_period(days_till_expiration, (((current_btc_price / current_quote['bidPrice']) - 1) * 100)), 2), '% annualised return.')
+        st.write('- Place an ask (sell) limit order on ', instrument_symbol, ' at ', current_quote['askPrice'], '. If someone take it, buy the XBTUSD at market (', current_btc_price,') and benefit of a', round(((current_quote['askPrice'] / current_btc_price) - 1) * 100, 2), '% return in', days_till_expiration, 'days. Equivalent to a ', round(get_annualized_premium_from_period(days_till_expiration, (((current_quote['askPrice'] / current_btc_price) - 1) * 100)), 2), '% annualised return.')
 
     if current_annualized_potential_return > risk_free_rate:
         st.write('=> Annualized premium compared to risk free rate is currently high and spread is low !')
         st.write('- Borrow money at the risk free rate (', risk_free_rate, '% annual), use the borrowed money to buy XBTUSD at market (', current_btc_price,
                  ') and sell ', instrument_symbol, ' with a market order at bid price (', current_quote['bidPrice'], ').'
                  'After ', days_till_expiration, ' days, close both positions, return the borrowed money and the due interest rates (', round(expected_premium_percent, 2), '%) and benefit from a net ', round(current_premium_percent - expected_premium_percent, 2), '% excess profit on your operation. ',
-                 'Equivalent to a ', round(365 / days_till_expiration * ((current_premium_percent - expected_premium_percent)), 2), '% net excess annualised return, or '
-                 'to a ', round(365 / days_till_expiration * (current_premium_percent), 2), '% gross annualised return.')
+                 'Equivalent to a ', round(get_annualized_premium_from_period(days_till_expiration, (current_premium_percent - expected_premium_percent)), 2), '% net excess annualised return, or '
+                 'to a ', round(get_annualized_premium_from_period(days_till_expiration, current_premium_percent), 2), '% gross annualised return.')
 
 
