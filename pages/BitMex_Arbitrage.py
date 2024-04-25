@@ -1,20 +1,22 @@
 import datetime
 import math
 
-import bitmex
 import pandas as pd
 import streamlit as st
 from bravado.client import SwaggerClient
 from pandas import DataFrame
 
-st.set_page_config(page_title='BitMex Arbitrage', layout='wide')
+from utils.bitmex_utils import get_bitmex_client
 
-st.title('BitMex Arbitrage')
+st.set_page_config(page_title='BitMex Arbitrage', layout='wide', page_icon='📈')
+
+st.title('BitMex Arbitrage 📈')
 
 # Sidebar
 st.sidebar.title('Configuration')
 
 contract_currency = st.sidebar.selectbox(label='Currency contract', options=['USD', 'USDT'])
+time_interval = st.sidebar.selectbox(label='Time interval', options=['1m','5m','1h','1d'])
 risk_free_rate = st.sidebar.number_input(label='Risk free rate (%)', value=5.3, min_value=0.0, max_value=100.0, step=0.1)
 initial_investment = st.sidebar.number_input(label='Initial investment ($)', value=1000, min_value=0)
 leverage = st.sidebar.number_input(label='Leverage', value=2, min_value=0)
@@ -22,14 +24,7 @@ leverage = st.sidebar.number_input(label='Leverage', value=2, min_value=0)
 nominal_investment = initial_investment * leverage
 st.sidebar.write('Nominal investment : ', nominal_investment, '$')
 
-client_id = st.secrets.bitmex.bitmex_client_id
-client_secret = st.secrets.bitmex.bitmex_client_secret
-
-@st.cache_resource
-def get_bitmex_client(api_key: str, api_secret: str) -> SwaggerClient:
-    return bitmex.bitmex(test=False, api_key=api_key, api_secret=api_secret)
-
-client = get_bitmex_client(api_key=client_id, api_secret=client_secret)
+client = get_bitmex_client()
 
 def get_active_instruments(client: SwaggerClient) -> DataFrame:
     active_instruments, _ = client.Instrument.Instrument_getActive().result()
@@ -99,8 +94,8 @@ st.line_chart(active_instruments, x='expiry', y=['midPrice', 'expected_value'])
 st.write('# Premium (%) per maturity')
 st.line_chart(active_instruments, x='expiry', y=['current_premium (%)', 'expected_premium (%)'], )
 
-xbtquotes = pd.DataFrame(client.Quote.Quote_getBucketed(symbol=f'XBT{contract_currency}', binSize='1d', partial = True, startTime=datetime.datetime.fromisoformat('2023-01-01'), count = 1000).result()[0])
-
+xbtquotes = pd.DataFrame(client.Quote.Quote_getBucketed(symbol=f'XBT{contract_currency}', binSize=time_interval, partial=True, reverse=True, endTime=datetime.datetime.now(), count=1000).result()[0]).sort_values(by='timestamp', ascending=True)
+st.dataframe(xbtquotes, hide_index=True)
 
 def get_annualized_premium(start_date, end_date, period_premium):
     nb_days = (end_date - start_date).days
@@ -120,9 +115,9 @@ def get_annualized_premium_from_period(period_days, period_premium):
 for i, instrument in active_instruments[active_instruments['typ'] == 'FFCCSX'].iterrows():
     instrument_symbol = instrument['symbol']
     st.write('# ', instrument_symbol)
-    quotes: DataFrame = pd.DataFrame(client.Quote.Quote_getBucketed(symbol=instrument['symbol'], binSize='1d', partial=True,
-                                                  startTime=datetime.datetime.fromisoformat('2023-01-01'),
-                                                  count=1000).result()[0])
+    quotes: DataFrame = pd.DataFrame(client.Quote.Quote_getBucketed(symbol=instrument['symbol'], binSize=time_interval, partial=True, reverse=True,
+                                                  endTime=datetime.datetime.now(),
+                                                  count=1000).result()[0]).sort_values(by='timestamp', ascending=True)
 
     joigned_quotes = pd.merge(quotes, xbtquotes, left_on='timestamp', right_on='timestamp', how='left', suffixes=('', '_XBT'))
     joigned_quotes['premium'] = ((joigned_quotes['askPrice'] + joigned_quotes['bidPrice']) / 2) - ((joigned_quotes['askPrice_XBT'] + joigned_quotes['bidPrice_XBT']) / 2)
