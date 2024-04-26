@@ -6,7 +6,7 @@ import streamlit as st
 from bravado.client import SwaggerClient
 from pandas import DataFrame
 
-from utils.bitmex_utils import get_bitmex_client
+from utils.bitmex_utils import get_bitmex_client, get_annualized_premium, get_annualized_premium_from_period
 
 st.set_page_config(page_title='BitMex Arbitrage', layout='wide', page_icon='📈')
 
@@ -95,21 +95,6 @@ st.write('# Premium (%) per maturity')
 st.line_chart(active_instruments, x='expiry', y=['current_premium (%)', 'expected_premium (%)'], )
 
 xbtquotes = pd.DataFrame(client.Quote.Quote_getBucketed(symbol=f'XBT{contract_currency}', binSize=time_interval, partial=True, reverse=True, endTime=datetime.datetime.now(), count=1000).result()[0]).sort_values(by='timestamp', ascending=True)
-st.dataframe(xbtquotes, hide_index=True)
-
-def get_annualized_premium(start_date, end_date, period_premium):
-    nb_days = (end_date - start_date).days
-    if nb_days == 0:
-        return 0
-    else:
-        return 365 / nb_days * period_premium
-
-
-def get_annualized_premium_from_period(period_days, period_premium):
-    if period_days == 0:
-        return 0
-    else:
-        return 365 / period_days * period_premium
 
 
 for i, instrument in active_instruments[active_instruments['typ'] == 'FFCCSX'].iterrows():
