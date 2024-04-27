@@ -79,11 +79,11 @@ for quote_currency in positions['quoteCurrency'].unique():
     reference_position_mid_price = reference_position.iloc[0]['midPrice']
     reference_position_currency = reference_position.iloc[0]['currency']
     futures_position = currency_positions[currency_positions['symbol'] != f'XBT{quote_currency}']
+
     futures_position['position_premium (%)'] = futures_position.apply(lambda x: ((x['midPrice'] / reference_position_mid_price) - 1) * 100, axis=1)
     futures_position['position_annualised_return (%)'] = futures_position.apply(lambda x: get_annualized_premium(pandas_now_datetime, x['expiry'], x['position_premium (%)']), axis=1)
     futures_position['future_return ($)'] = futures_position['position_premium (%)']/100 * futures_position['foreignNotional']
     futures_position['future_return_annualised ($)'] = futures_position['position_annualised_return (%)']/100 * futures_position['foreignNotional']
-
 
     st.write('Futures positions')
     st.dataframe(futures_position, hide_index=True)
