@@ -4,3 +4,4 @@ bitmex
 bitmex-ws
 lxml
 beautifulsoup4
+python-bitget
